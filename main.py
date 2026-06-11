@@ -6,7 +6,7 @@ import random
 ray.init(ignore_reinit_error=True)
 
 # ==========================================
-# 1. 定义 Worker Agent (模拟旧设备节点)
+# 1. 定义 Worker Agent (模拟异构旧设备节点)
 # ==========================================
 @ray.remote
 class WorkerAgent:
@@ -14,7 +14,12 @@ class WorkerAgent:
         self.node_id = node_id
         # 初始资源状态
         self.electricity_tokens = 0     # 初始电费 Token
-        self.cpu_usage = random.uniform(5.0, 15.0)  # 模拟 CPU 占用率 (%)
+        
+        # 拆分三大核心硬件的占用率 (%)
+        self.cpu_usage = random.uniform(1.0, 5.0)
+        self.gpu_usage = 0.0  
+        self.npu_usage = 0.0  
+        
         self.temperature = random.uniform(35.0, 45.0) # 模拟硬件温度 (°C)
         self.current_task = "Idle"
         self.reward_points = 0 # 累积奖励积分
@@ -26,6 +31,8 @@ class WorkerAgent:
             "id": self.node_id,
             "tokens": self.electricity_tokens,
             "cpu": round(self.cpu_usage, 2),
+            "gpu": round(self.gpu_usage, 2),
+            "npu": round(self.npu_usage, 2),
             "temp": round(self.temperature, 2),
             "task": self.current_task,
             "reward": self.end_points
@@ -33,39 +40,50 @@ class WorkerAgent:
 
     def run_low_power_task(self):
         """
-        饥饿机制：低功耗运行以赚取“电费 Token”
+        饥饿机制：利用 NPU 进行低功耗边缘推理，赚取“电费 Token”
         """
-        self.current_task = "Low Power (赚取 Token)"
-        self.cpu_usage = random.uniform(5.0, 20.0) # 维持低占用
-        self.temperature = max(30.0, self.temperature - random.uniform(2.0, 8.0)) # 散热降温
-        self.electricity_tokens += random.randint(4, 6) # 赚取 Token 奖励
-        time.sleep(0.5) # 模拟运行耗时
+        self.current_task = "Edge Inference (NPU赚Token)"
+        self.cpu_usage = random.uniform(5.0, 15.0) 
+        self.gpu_usage = 0.0 # 关闭 GPU 省电
+        self.npu_usage = random.uniform(40.0, 80.0) # NPU 高效工作
+        
+        # NPU 功耗低，发热小，甚至能让整体系统散热降温
+        self.temperature = max(35.0, self.temperature - random.uniform(2.0, 5.0)) 
+        self.electricity_tokens += random.randint(4, 7) # 赚取 Token 奖励
+        time.sleep(0.5) 
 
-    def run_heavy_task(self, task_name="LLM 推理"):
+    def run_heavy_task(self, task_name):
         """
-        高性能核心抢占：消耗 Token 执行重负载任务 (如 LLM/大型编译)
+        高性能核心抢占：消耗 Token 执行重负载任务 (区分 GPU 与 CPU 职责)
         """
-        # 抢占门槛
         if self.electricity_tokens >= 10:
-            self.current_task = f"Heavy Task ({task_name})"
-            # 模拟高负载带来的硬件压力
-            if task_name == "LLM 推理":
-                self.cpu_usage = random.uniform(85.0, 98.0) # 模拟高占用
-                self.temperature += random.uniform(20.0, 30.0) # 模拟温度升高
-                self.electricity_tokens -= 10 # 支付 Token 费用
-                self.reward_points += 8 # 完成高功耗任务获得奖励积分
-            elif task_name == "大型 C++ 编译":
-                self.cpu_usage = random.uniform(85.0, 100.0) # 模拟高占用
-                self.temperature += random.uniform(15.0, 25.0) # 模拟温度升高
-                self.electricity_tokens -= 8 # 支付 Token 费用
-                self.reward_points += 6 # 完成高功耗任务获得奖励积分
-            self.end_points += self.reward_points # 累积最终分数
-            #self.cpu_usage = random.uniform(85.0, 100.0) 
-            #self.temperature += random.uniform(15.0, 30.0) 
-            time.sleep(1.0) # 模拟运行耗时
+            self.current_task = f"Heavy ({task_name})"
+            
+            if task_name == "LLM Prefill (GPU)":
+                # GPU 负责极耗资源的 Prompt 预处理和大型矩阵乘法
+                self.cpu_usage = random.uniform(20.0, 40.0) # CPU 负责发指令和数据调度
+                self.gpu_usage = random.uniform(85.0, 99.0) # GPU 满载
+                self.npu_usage = 0.0
+                
+                self.temperature += random.uniform(20.0, 35.0) # GPU 导致温度狂飙
+                self.electricity_tokens -= 12 # GPU 极度费电，消耗更多 Token
+                self.reward_points += 10 # 高难度任务高回报
+                
+            elif task_name == "Data Tokenization (CPU)":
+                # CPU 负责大语言模型的数据分词预处理、I/O 等逻辑密集型任务
+                self.cpu_usage = random.uniform(85.0, 98.0) # CPU 满载
+                self.gpu_usage = 0.0
+                self.npu_usage = 0.0
+                
+                self.temperature += random.uniform(10.0, 20.0) # CPU 发热中等
+                self.electricity_tokens -= 8 # CPU 费电一般
+                self.reward_points += 6 # 中等回报
+
+            
+            time.sleep(1.0) 
             return True
         else:
-            self.current_task = "Hungry (等待赚取)"
+            self.current_task = "Hungry (等待 NPU 赚取)"
             return False
 
     def apply_penalty(self, penalty_amount):
@@ -74,16 +92,15 @@ class WorkerAgent:
     
     def apply_reward(self):
         """Master 下发的奖励机制"""
-        self.electricity_tokens += self.reward_points
-        self.reward_points = 0 # 重置奖励积分
+        self.end_points += self.reward_points
+        self.reward_points = 0 
 
 # ==========================================
 # 2. 定义 Master Agent (资源调度中枢)
 # ==========================================
 class MasterAgent:
     def __init__(self, num_workers=3):
-        print(f"👑 Master Agent 启动，已接管 {num_workers} 台 Worker 设备...\n")
-        # 部署多个 Worker Actor 到 Ray 集群
+        print(f"👑 Master Agent 启动，已接管 {num_workers} 台异构节点设备...\n")
         self.workers = [WorkerAgent.remote(f"Node-{i+1}") for i in range(num_workers)]
 
     def get_all_states(self):
@@ -98,12 +115,18 @@ class MasterAgent:
 
             # --- 步骤 A: 监控与惩罚奖励机制 ---
             for worker, state in zip(self.workers, states):
-                worker.apply_reward.remote() # 奖励完成高功耗的设备
-                # 设定阈值：温度过高 (>85度) 或持续满载
-                if state['temp'] > 85.0 or state['cpu'] > 95.0:
-                    print(f"  [警告] {state['id']} 设备过热或满载 (温度: {state['temp']}°C, CPU: {state['cpu']}%)！扣除 15 Token。")
+                worker.apply_reward.remote() 
+                
+                # 触发惩罚的阈值判定：总温度过高，或者 GPU/CPU 长时间撞温度墙
+                if state['temp'] > 85.0:
+                    print(f"  [过热警告] {state['id']} 整体温度过高 ({state['temp']}°C)！扣除 15 Token 强制降频。")
                     worker.apply_penalty.remote(15)
-
+                elif state['gpu'] > 95.0:
+                    print(f"  [负载警告] {state['id']} GPU 撞击温度墙限制 (GPU: {state['gpu']}%)！扣除 10 Token。")
+                    worker.apply_penalty.remote(10)
+                elif state['cpu'] > 95.0:
+                    print(f"  [负载警告] {state['id']} CPU 满载时间过长 (CPU: {state['cpu']}%)！扣除 5 Token。")
+                    worker.apply_penalty.remote(5)
 
             # 刷新状态
             states = self.get_all_states()
@@ -111,23 +134,26 @@ class MasterAgent:
             # --- 步骤 B: 任务分配与“饥饿感”机制 ---
             for worker, state in zip(self.workers, states):
                 if state['tokens'] < 10:
-                    # 触发“饥饿感”，设备必须去打工赚电费
-                    print(f"  [打工] {state['id']} 处于饥饿状态 (Tokens: {state['tokens']})，强制低功耗运行赚取 Token。")
+                    # 触发“饥饿感”，设备必须去打工赚电费 (NPU 边缘计算)
+                    print(f"  [打工] {state['id']} 处于饥饿状态 (Tokens: {state['tokens']})，切换 NPU 低功耗边缘推理赚取 Token。")
                     worker.run_low_power_task.remote()
                 else:
-                    # Token 充足，分配高价值、高消耗的重型任务
-                    task_name = random.choice(["LLM 推理", "大型 C++ 编译"])
-                    print(f"  [抢占] {state['id']} Token 充足 (Tokens: {state['tokens']})，分配重负载任务: {task_name}")
+                    # Token 充足，根据大模型流水线分配对应硬件任务
+                    task_name = random.choice(["LLM Prefill (GPU)", "Data Tokenization (CPU)"])
+                    print(f"  [抢占] {state['id']} 算力充足 (Tokens: {state['tokens']})，分配重负载任务: {task_name}")
                     worker.run_heavy_task.remote(task_name)
 
             # 等待异步任务执行一小会
             time.sleep(1.5)
 
-            # --- 步骤 C: 打印本回合结算面板 ---
+            # --- 步骤 C: 打印本回合结算面板 (加入异构数据) ---
             print("\n  📊 回合结算状态摘要:")
             final_states = self.get_all_states()
+            # 格式化表头对齐
+            print(f"    {'节点':<8} | {'Tokens':<6} | {'CPU %':<6} | {'GPU %':<6} | {'NPU %':<6} | {'温度 °C':<7} | {'奖励分':<6} | 当前状态")
+            print("    " + "-"*85)
             for s in final_states:
-                print(f"    节点: {s['id']} | Tokens: {s['tokens']:>3} | CPU: {s['cpu']:>5}% | 温度: {s['temp']:>5}°C | 状态: {s['task']} | 奖励: {s['reward']}")
+                print(f"    {s['id']:<8} | {s['tokens']:<6} | {s['cpu']:<6.2f} | {s['gpu']:<6.2f} | {s['npu']:<6.2f} | {s['temp']:<7.2f} | {s['reward']:<6} | {s['task']}")
             print("\n")
 
 # ==========================================
@@ -137,10 +163,8 @@ if __name__ == "__main__":
     # 初始化 3 台旧设备的模拟集群
     master = MasterAgent(num_workers=5)
     
-    # 运行 4 个周期的博弈调度
+    # 运行 10 个周期的博弈调度
     master.orchestrate(rounds=10)
     
     # 关闭 Ray 集群
     ray.shutdown()
-
-
